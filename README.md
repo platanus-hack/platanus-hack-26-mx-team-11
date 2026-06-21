@@ -2,7 +2,7 @@
 
 <img src="./project-logo.png" alt="Sentinel logo" width="140" />
 
-Sentinel es una capa de seguridad para equipos que usan Claude Code con miembros no técnicos. El equipo técnico define políticas para evitar riesgos como que se filtren datos sensibles, y Sentinel interviene cuando una sesión se sale de esos límites. Los miembros siguen construyendo con el agente, mientras el dashboard muestra actividad, decisiones y alertas en tiempo real.
+Sentinel es una capa de seguridad para equipos que usan Claude Code con miembros no técnicos. El equipo técnico define políticas para evitar riesgos como que se filtren datos sensibles, y Sentinel interviene cuando una sesión se sale de esos límites. Los miembros siguen construyendo con el agente, mientras el dashboard muestra actividad, decisiones y alertas en tiempo real para CTOs y equipos de seguridad.
 
 ## Demo
 
