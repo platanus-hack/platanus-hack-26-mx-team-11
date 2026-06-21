@@ -1,13 +1,21 @@
 "use client";
 
+import Link from "next/link";
 import { useEffect, useMemo, useState, type CSSProperties } from "react";
 import { useSessions } from "@/lib/client/useSessions";
+import { Brand } from "@/components/ui/Brand";
 import { C } from "@/components/dashboard/theme";
 import { StatStrip } from "@/components/dashboard/StatStrip";
 import { SessionRow } from "@/components/dashboard/SessionRow";
 import { Replay } from "@/components/dashboard/Replay";
+import { logout } from "@/app/(auth)/actions";
 
-export function Console() {
+export interface ConsoleViewer {
+  name: string;
+  orgName: string;
+}
+
+export function Console({ viewer }: { viewer?: ConsoleViewer | null }) {
   const sessions = useSessions();
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [clock, setClock] = useState("");
@@ -29,18 +37,22 @@ export function Console() {
     <div style={st.root}>
       <header style={st.header}>
         <div style={st.brandWrap}>
-          <span className="cs-radar" style={st.radar} />
-          <div>
-            <div style={st.brand}>
-              Code<span style={{ color: C.accent }}>Sentinel</span>
-            </div>
-            <div style={st.brandSub}>AI coding security console</div>
-          </div>
+          <Brand variant="dark" size={30} pulse />
+          <span style={st.brandSub}>Security console</span>
         </div>
-        <div style={st.clock}>
-          <span className="cs-live" style={st.liveDot} />
-          <span style={{ fontFamily: "var(--mono)" }}>{clock}</span>
-          <span style={{ color: C.faint, marginLeft: 8 }}>· Claude Code</span>
+        <div style={st.headRight}>
+          <Link href="/dashboard/team" style={st.navLink}>Team</Link>
+          <Link href="/policies" style={st.navLink}>Policy Studio</Link>
+          <div style={st.clock}>
+            <span className="cs-live" style={st.liveDot} />
+            <span style={{ fontFamily: "var(--mono)" }}>{clock}</span>
+          </div>
+          {viewer && (
+            <form action={logout} style={st.account}>
+              <span style={st.accountName}>{viewer.name}{viewer.orgName ? ` · ${viewer.orgName}` : ""}</span>
+              <button type="submit" style={st.signOut}>Sign out</button>
+            </form>
+          )}
         </div>
       </header>
 
@@ -77,11 +89,14 @@ export function Console() {
 const st: Record<string, CSSProperties> = {
   root: { background: C.bg, color: C.text, minHeight: "100vh", fontFamily: "var(--ui)", border: `1px solid ${C.border}` },
   header: { display: "flex", justifyContent: "space-between", alignItems: "center", padding: "16px 20px", borderBottom: `1px solid ${C.border}`, background: `linear-gradient(180deg, ${C.panel}, ${C.panel2})`, gap: 14, flexWrap: "wrap" },
-  brandWrap: { display: "flex", alignItems: "center", gap: 13 },
-  radar: { width: 30, height: 30, borderRadius: "50%", border: `2px solid ${C.accent}`, position: "relative", display: "inline-block" },
-  brand: { fontSize: 19, fontWeight: 700, letterSpacing: "-0.02em", lineHeight: 1 },
-  brandSub: { fontSize: 11, color: C.muted, marginTop: 3, letterSpacing: "0.04em", textTransform: "uppercase" },
+  brandWrap: { display: "flex", alignItems: "center", gap: 12 },
+  brandSub: { fontSize: 10.5, color: C.muted, letterSpacing: "0.06em", textTransform: "uppercase", border: `1px solid ${C.borderSoft}`, borderRadius: 20, padding: "3px 9px" },
+  headRight: { display: "flex", alignItems: "center", gap: 16, flexWrap: "wrap" },
+  navLink: { color: C.muted, textDecoration: "none", fontSize: 13, fontWeight: 600 },
   clock: { fontSize: 12.5, color: C.muted, display: "flex", alignItems: "center", gap: 7 },
+  account: { display: "flex", alignItems: "center", gap: 10 },
+  accountName: { fontSize: 12, color: C.faint },
+  signOut: { background: "transparent", color: C.muted, border: `1px solid ${C.border}`, borderRadius: 7, padding: "5px 11px", fontSize: 12, fontWeight: 600, cursor: "pointer", fontFamily: "var(--ui)" },
   liveDot: { width: 7, height: 7, borderRadius: "50%", background: "#FF5160", display: "inline-block" },
   body: { display: "flex", gap: 1, background: C.border, minHeight: 420 },
   left: { background: C.bg, display: "flex", flexDirection: "column", width: 340, flexShrink: 0 },
