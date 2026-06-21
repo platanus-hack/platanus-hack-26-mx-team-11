@@ -13,6 +13,10 @@ team-11
 - Alejandro Maguey Rentería ([@alexmaguey](https://github.com/alexmaguey))
 - Alden Myers ([@kaldenm](https://github.com/kaldenm))
 
+## Product flows
+
+See [docs/FLOWS.md](docs/FLOWS.md) for ASCII mockups and descriptions of the CTO setup flows, vibe coder onboarding flow, team invite flow, and role/rule configuration.
+
 Before Submitting:
 
 - ✅ Fill in the project metadata (name, oneliner, description and deploy URL) in platanus-hack-project.jsonc
