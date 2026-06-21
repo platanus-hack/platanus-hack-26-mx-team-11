@@ -1,63 +1,100 @@
-import type { EventType, Severity } from "@/lib/types";
-
 /**
- * Sentinel design system. Two palettes share one signal-teal accent:
- * - `dark`  → the console/dashboard, where admins live (calm, focused).
- * - `light` → marketing + auth, welcoming for non-technical users.
- * Components pick a palette; everything else (severity, helpers) is shared.
+ * Design tokens + small presentational helpers. The console runs on the dark
+ * palette; `components/dashboard/theme.ts` re-exports `dark` as `C`.
  */
+import type { EventType, RiskCategory, RiskSeverity } from "@/lib/types";
 
 export const dark = {
-  bg: "#0A0E13",
-  panel: "#10171F",
-  panel2: "#0D131A",
-  raised: "#152030",
+  bg: "#0B0F14",
+  panel: "#121A24",
+  panel2: "#0F151D",
+  raised: "#16202C",
   border: "#1E2A38",
   borderSoft: "#172230",
-  text: "#E8EFF4",
-  muted: "#8595A6",
-  faint: "#55636F",
+  text: "#E6EDF3",
+  muted: "#8A9BA8",
+  faint: "#5A6B7A",
   accent: "#34E5D0",
   accentInk: "#06231F",
 } as const;
 
+/** Light palette for marketing surfaces (kept minimal — exported for parity). */
 export const light = {
-  bg: "#FBFCFD",
-  panel: "#FFFFFF",
-  panel2: "#F4F7F9",
-  raised: "#ECF2F5",
-  border: "#E2E8EC",
-  borderSoft: "#EDF1F4",
-  text: "#0E1620",
-  muted: "#5A6B78",
-  faint: "#8DA0AD",
-  accent: "#0FB3A2",
+  bg: "#FFFFFF",
+  panel: "#F6F8FA",
+  panel2: "#EEF2F5",
+  raised: "#E9EEF2",
+  border: "#D7DEE5",
+  borderSoft: "#E4E9EE",
+  text: "#0B0F14",
+  muted: "#52606B",
+  faint: "#8A97A2",
+  accent: "#0FB89E",
   accentInk: "#FFFFFF",
 } as const;
 
-export type Palette = { readonly [K in keyof typeof dark]: string };
+/** Shared palette shape (dark and light share keys). */
+export type Palette = { [K in keyof typeof dark]: string };
 
-export const SEV: Record<Severity, { color: string; glow: string; label: string }> = {
-  critical: { color: "#FF5160", glow: "rgba(255,81,96,.22)", label: "Critical" },
-  high: { color: "#FF9F40", glow: "rgba(255,159,64,.20)", label: "High" },
-  medium: { color: "#FFD23F", glow: "rgba(255,210,63,.18)", label: "Medium" },
-  low: { color: "#4FB7FF", glow: "rgba(79,183,255,.18)", label: "Low" },
+/** Severity styling, keyed by the analyst's flag severities. */
+export const SEV: Record<RiskSeverity, { label: string; color: string; glow: string }> = {
+  low: { label: "low", color: "#34E5D0", glow: "rgba(52,229,208,0.18)" },
+  medium: { label: "medium", color: "#FFD23F", glow: "rgba(255,210,63,0.18)" },
+  high: { label: "high", color: "#FF9F40", glow: "rgba(255,159,64,0.20)" },
+  critical: { label: "critical", color: "#FF5160", glow: "rgba(255,81,96,0.24)" },
 };
 
-export const TYPE_META: Record<EventType, { label: string; dot: string; icon: string }> = {
-  prompt: { label: "Prompt", dot: "#7E8C9C", icon: "›_" },
-  response: { label: "AI response", dot: "#8C9CFF", icon: "✦" },
-  code_change: { label: "Code change", dot: "#9AE6B4", icon: "±" },
-  tool_call: { label: "Tool call", dot: "#FFB454", icon: "⌘" },
+/** Per-event-type label, glyph, and rail dot colour for the timeline. */
+export const TYPE_META: Record<EventType, { label: string; icon: string; dot: string }> = {
+  prompt: { label: "Prompt", icon: "›", dot: "#8C9CFF" },
+  response: { label: "Response", icon: "✦", dot: "#34E5D0" },
+  tool_call: { label: "Tool call", icon: "⚙", dot: "#FF9F40" },
+  code_change: { label: "Code change", icon: "±", dot: "#D08C5E" },
 };
 
-export const riskColor = (s: number) =>
-  s >= 75 ? SEV.critical.color : s >= 50 ? SEV.high.color : s >= 25 ? SEV.medium.color : SEV.low.color;
+/** Category labels used by flag chips / breakdowns. */
+export const CATEGORY_META: Record<RiskCategory, { label: string; color: string }> = {
+  policy: { label: "Policy", color: "#FF9F40" },
+  pii: { label: "PII", color: "#FF5160" },
+  insecure: { label: "Insecure", color: "#FFD23F" },
+  injection: { label: "Injection", color: "#8C9CFF" },
+};
 
-export const riskBand = (s: number) =>
-  s >= 75 ? "Critical" : s >= 50 ? "Elevated" : s >= 25 ? "Watch" : "Nominal";
+/** Map a 0–100 risk score to a palette colour. */
+export function riskColor(score: number): string {
+  if (score >= 75) return SEV.critical.color;
+  if (score >= 50) return SEV.high.color;
+  if (score >= 25) return SEV.medium.color;
+  return dark.accent;
+}
 
-export const initials = (name: string) =>
-  name.split(" ").map((w) => w[0]).join("").slice(0, 2).toUpperCase();
+/** Map a 0–100 risk score to a human band. */
+export function riskBand(score: number): string {
+  if (score >= 75) return "critical";
+  if (score >= 50) return "high";
+  if (score >= 25) return "elevated";
+  return "calm";
+}
 
-export const hhmmss = (ms: number) => new Date(ms).toLocaleTimeString("en-GB", { hour12: false });
+/** Bucket a 0–100 score into a flag severity. */
+export function severityForScore(score: number): RiskSeverity {
+  if (score >= 75) return "critical";
+  if (score >= 50) return "high";
+  if (score >= 25) return "medium";
+  return "low";
+}
+
+/** Up-to-two-letter initials for an avatar. */
+export function initials(name: string): string {
+  const parts = name.trim().split(/\s+/).filter(Boolean);
+  if (parts.length === 0) return "?";
+  if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
+  return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
+}
+
+/** Format an ISO timestamp as HH:MM:SS (24h). */
+export function hhmmss(iso: string): string {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "--:--:--";
+  return d.toLocaleTimeString("en-GB", { hour12: false });
+}

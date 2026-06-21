@@ -1,84 +1,95 @@
-import type { RiskFlag, SessionEvent } from "@/lib/types";
+/**
+ * Map a Claude Code hook event to our domain model, run the analyst, persist it,
+ * and decide whether to block. This is the observability path; the pre-request
+ * correction path lives in app/api/evaluate.
+ */
+import { randomUUID } from "crypto";
+import type { EventType, SessionEvent } from "@/lib/types";
 import type { Identity } from "@/lib/auth/identity";
-import { ensureSession, endSession, recentContext, recordEvent } from "@/lib/repo/ingest";
-import { analyzeEvent, isCritical } from "@/lib/risk/analyzer";
-import {
-  describeTool,
-  isCodeChange,
-  titleFromCwd,
-  type ClaudeHookEvent,
-} from "@/lib/ingest/claudeHooks";
+import type { ClaudeHookEvent } from "@/lib/ingest/claudeHooks";
+import { blockCritical } from "@/lib/db/env";
+import { analyzeEvent } from "@/lib/risk/analyzer";
+import { markSessionEnded, recordEvent, recordSession } from "@/lib/repo/ingest";
 
-export interface IngestResult {
-  ok: boolean;
-  blocked: boolean;
+export interface ProcessResult {
+  blocked?: boolean;
   reason?: string;
 }
 
-const ACCEPTED: IngestResult = { ok: true, blocked: false };
-const MAX_CONTEXT_EVENTS = 6;
+export async function processHookEvent(identity: Identity, event: ClaudeHookEvent): Promise<ProcessResult> {
+  const sessionId = event.session_id;
+  await recordSession(identity, { id: sessionId, title: deriveTitle(event) });
 
-/**
- * Translate one Claude Code hook event into our domain model, run the analyst,
- * and persist it. Returns whether the tool call should be blocked (PreToolUse +
- * a critical flag + blocking enabled).
- */
-export async function processHookEvent(identity: Identity, e: ClaudeHookEvent): Promise<IngestResult> {
-  await ensureSession({
-    id: e.session_id,
-    orgId: identity.orgId,
-    memberId: identity.id,
-    memberName: identity.name,
-    team: identity.team,
-    title: titleFromCwd(e.cwd),
-  });
+  // Lifecycle-only events: close the session, nothing to analyze.
+  if (event.hook_event_name === "Stop" || event.hook_event_name === "SessionEnd") {
+    await markSessionEnded(identity, sessionId);
+    return {};
+  }
 
-  switch (e.hook_event_name) {
-    case "SessionStart":
-      return ACCEPTED;
+  const mapped = toEventShape(event, identity);
+  if (!mapped) return {};
 
+  const assessment = await analyzeEvent({ type: mapped.type, who: mapped.who, content: mapped.content });
+
+  const sessionEvent: SessionEvent = {
+    id: randomUUID(),
+    type: mapped.type,
+    who: mapped.who,
+    content: mapped.content,
+    summary: assessment.summary || undefined,
+    riskScore: assessment.riskScore,
+    timestamp: new Date().toISOString(),
+    flags: assessment.flags,
+  };
+  await recordEvent(identity, sessionId, sessionEvent);
+
+  // Hard backstop: deny a critical tool call before it runs (opt-in).
+  if (event.hook_event_name === "PreToolUse" && blockCritical) {
+    const crit = assessment.flags.find((f) => f.severity === "critical");
+    if (crit) return { blocked: true, reason: crit.suggestedFix || assessment.summary || crit.title };
+  }
+  return {};
+}
+
+interface EventShape {
+  type: EventType;
+  who: string;
+  content: string;
+}
+
+function toEventShape(event: ClaudeHookEvent, identity: Identity): EventShape | null {
+  switch (event.hook_event_name) {
     case "UserPromptSubmit":
-      await record(identity, e.session_id, "prompt", identity.name, e.prompt);
-      return ACCEPTED;
-
-    case "PreToolUse": {
-      const content = describeTool(e.tool_name, e.tool_input);
-      const type = isCodeChange(e.tool_name) ? "code_change" : "tool_call";
-      const flags = await record(identity, e.session_id, type, "Claude Code", content);
-      if (isCritical(flags) && process.env.CS_BLOCK_CRITICAL === "true") {
-        return { ok: true, blocked: true, reason: flags.find((f) => f.severity === "critical")!.explanation };
-      }
-      return ACCEPTED;
-    }
-
-    case "SessionEnd":
-      await endSession(identity.orgId, e.session_id);
-      return ACCEPTED;
-
-    default: // Stop and any future events.
-      return ACCEPTED;
+      return event.prompt
+        ? { type: "prompt", who: identity.memberName, content: event.prompt }
+        : null;
+    case "PreToolUse":
+    case "PostToolUse":
+      return {
+        type: "tool_call",
+        who: "Claude Code",
+        content: `${event.tool_name ?? "tool"} ${stringifyInput(event.tool_input)}`.trim(),
+      };
+    case "Notification":
+      return event.message ? { type: "response", who: "Claude Code", content: event.message } : null;
+    default:
+      return null;
   }
 }
 
-/** Analyze an event against the session's recent history, then store it. */
-async function record(
-  identity: Identity,
-  sessionId: string,
-  type: SessionEvent["type"],
-  who: string,
-  content: string
-): Promise<RiskFlag[]> {
-  const context = await recentContext(sessionId, MAX_CONTEXT_EVENTS);
-  const assessment = await analyzeEvent({ type, who, content, context });
-  await recordEvent({
-    sessionId,
-    orgId: identity.orgId,
-    type,
-    who,
-    content,
-    riskScore: assessment.riskScore,
-    summary: assessment.summary,
-    flags: assessment.flags,
-  });
-  return assessment.flags;
+function deriveTitle(event: ClaudeHookEvent): string | undefined {
+  if (event.hook_event_name === "UserPromptSubmit" && event.prompt) {
+    return event.prompt.split(/\s+/).slice(0, 7).join(" ");
+  }
+  return undefined;
+}
+
+function stringifyInput(input: Record<string, unknown> | undefined): string {
+  if (!input) return "";
+  try {
+    const s = JSON.stringify(input);
+    return s.length > 800 ? `${s.slice(0, 800)}…` : s;
+  } catch {
+    return "";
+  }
 }

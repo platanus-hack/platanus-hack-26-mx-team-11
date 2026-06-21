@@ -1,115 +1,101 @@
-import type { RiskFlag, SessionEvent } from "@/lib/types";
-import { isServiceConfigured } from "@/lib/db/env";
-import { getServiceSupabase } from "@/lib/db/supabase/admin";
-import { memoryStore } from "@/lib/repo/memory-store";
+/**
+ * Write side for the ingest pipeline. Demo mode writes to the in-memory store;
+ * with the service role it persists to Postgres (bypassing RLS, org set
+ * explicitly) and bumps the session's rolling max risk.
+ */
+import type { SessionEvent } from "@/lib/types";
+import type { Identity } from "@/lib/auth/identity";
+import { hasServiceRole } from "@/lib/db/env";
+import { adminSupabase } from "@/lib/db/supabase/admin";
+import { appendEvent, endSession, upsertSession } from "@/lib/repo/memstore";
 
-export interface EnsureInput {
+export interface SessionMeta {
   id: string;
-  orgId: string;
-  memberId: string;
-  memberName: string;
-  team: string;
-  title: string;
+  title?: string;
 }
 
-export interface RecordInput {
-  sessionId: string;
-  orgId: string;
-  type: SessionEvent["type"];
-  who: string;
-  content: string;
-  riskScore: number;
-  summary: string;
-  flags: RiskFlag[];
-}
-
-export type ContextItem = { type: SessionEvent["type"]; who: string; content: string };
-
-const useDb = () => isServiceConfigured;
-
-/** Create the session on first sight (idempotent). */
-export async function ensureSession(i: EnsureInput): Promise<void> {
-  if (!useDb()) return memoryStore.ensure({ id: i.id, user: i.memberName, team: i.team, title: i.title });
-  const supabase = getServiceSupabase()!;
-  await supabase.from("sessions").upsert(
+/** Ensure the session row exists / is current. */
+export async function recordSession(identity: Identity, meta: SessionMeta): Promise<void> {
+  if (!hasServiceRole) {
+    upsertSession(identity.orgId, {
+      id: meta.id,
+      user: identity.memberName,
+      team: identity.team,
+      title: meta.title,
+    });
+    return;
+  }
+  const db = adminSupabase();
+  if (!db) return;
+  await db.from("sessions").upsert(
     {
-      id: i.id,
-      org_id: i.orgId,
-      member_id: isUuid(i.memberId) ? i.memberId : null,
-      member_name: i.memberName,
-      team: i.team,
-      title: i.title,
+      id: meta.id,
+      org_id: identity.orgId,
+      member_id: isUuid(identity.memberId) ? identity.memberId : null,
+      member_name: identity.memberName,
+      team: identity.team,
+      ...(meta.title ? { title: meta.title } : {}),
     },
-    { onConflict: "id", ignoreDuplicates: true }
+    { onConflict: "id" }
   );
 }
 
-/** Recent prior events for the analyst's context window. */
-export async function recentContext(sessionId: string, limit: number): Promise<ContextItem[]> {
-  if (!useDb()) return memoryStore.recent(sessionId, limit);
-  const supabase = getServiceSupabase()!;
-  const { data } = await supabase
-    .from("events")
-    .select("type, who, content")
-    .eq("session_id", sessionId)
-    .order("created_at", { ascending: false })
-    .limit(limit);
-  return (data ?? []).reverse() as ContextItem[];
-}
-
-/** Persist one analyzed event + its flags, then bump the session's risk. */
-export async function recordEvent(i: RecordInput): Promise<void> {
-  if (!useDb()) {
-    return memoryStore.record({
-      sessionId: i.sessionId,
-      type: i.type,
-      who: i.who,
-      content: i.content,
-      riskScore: i.riskScore,
-      summary: i.summary,
-      flags: i.flags,
-    });
+/** Persist one analyzed event and its flags; raise session risk. */
+export async function recordEvent(identity: Identity, sessionId: string, event: SessionEvent): Promise<void> {
+  if (!hasServiceRole) {
+    appendEvent(identity.orgId, sessionId, event);
+    return;
   }
-  const supabase = getServiceSupabase()!;
-  const { data: event } = await supabase
+  const db = adminSupabase();
+  if (!db) return;
+
+  const { data: inserted } = await db
     .from("events")
     .insert({
-      session_id: i.sessionId,
-      org_id: i.orgId,
-      type: i.type,
-      who: i.who,
-      content: i.content,
-      risk_score: i.riskScore,
-      summary: i.summary,
+      session_id: sessionId,
+      org_id: identity.orgId,
+      type: event.type,
+      who: event.who,
+      content: event.content,
+      risk_score: event.riskScore,
+      summary: event.summary ?? "",
     })
     .select("id")
     .single();
 
-  if (event && i.flags.length) {
-    await supabase.from("risk_flags").insert(
-      i.flags.map((f) => ({
-        event_id: event.id,
-        org_id: i.orgId,
+  const eventId = inserted?.id;
+  if (eventId && event.flags.length) {
+    await db.from("risk_flags").insert(
+      event.flags.map((f) => ({
+        event_id: eventId,
+        org_id: identity.orgId,
         category: f.category,
         severity: f.severity,
         title: f.title,
         explanation: f.explanation,
         suggested_fix: f.suggestedFix,
-        confidence: f.confidence,
+        confidence: f.confidence ?? 0.5,
       }))
     );
   }
-  await supabase.rpc("bump_session_risk", { p_session: i.sessionId, p_score: i.riskScore });
+
+  await db.rpc("bump_session_risk", { p_session: sessionId, p_score: event.riskScore });
 }
 
-export async function endSession(orgId: string, sessionId: string): Promise<void> {
-  if (!useDb()) return memoryStore.end(sessionId);
-  const supabase = getServiceSupabase()!;
-  await supabase
+export async function markSessionEnded(identity: Identity, sessionId: string): Promise<void> {
+  if (!hasServiceRole) {
+    endSession(sessionId);
+    return;
+  }
+  const db = adminSupabase();
+  if (!db) return;
+  await db
     .from("sessions")
-    .update({ status: "completed", ended_at: new Date().toISOString() })
+    .update({ status: "ended", ended_at: new Date().toISOString() })
     .eq("id", sessionId)
-    .eq("org_id", orgId);
+    .eq("org_id", identity.orgId);
 }
 
-const isUuid = (s: string) => /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(s);
+function isUuid(s: string): boolean {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(s);
+}

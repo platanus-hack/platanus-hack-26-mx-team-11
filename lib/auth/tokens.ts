@@ -1,55 +1,72 @@
-import { createHash, randomBytes } from "node:crypto";
-import { getServiceSupabase } from "@/lib/db/supabase/admin";
+import { createHash, randomBytes } from "crypto";
+import { adminSupabase } from "@/lib/db/supabase/admin";
+import { DEV_KEY, isSupabaseConfigured, staticKeys } from "@/lib/db/env";
+import { ROLE_DEFAULT, roleById } from "@/lib/policy/roles";
 
-export interface TokenContext {
+/** A tracked member as the installer / onboarding needs it. */
+export interface MemberToken {
   memberId: string;
-  orgId: string;
   memberName: string;
-  team: string;
-  roleId: string;
   policyIds: string[];
 }
 
-const PREFIX = "snt_live_";
-
-/** A fresh opaque token. Returned to the admin ONCE; only its hash is stored. */
+/** Mint a fresh plaintext token. Shown once, stored only as a hash. */
 export function generateToken(): string {
-  return PREFIX + randomBytes(24).toString("base64url");
+  return `cs_live_${randomBytes(24).toString("hex")}`;
 }
 
-export const hashToken = (token: string) => createHash("sha256").update(token).digest("hex");
+/** Deterministic sha256 hash stored at rest. */
+export function hashToken(token: string): string {
+  return createHash("sha256").update(token).digest("hex");
+}
 
-/** Short, safe-to-display prefix, e.g. "snt_live_ab12cd". */
-export const tokenPrefix = (token: string) => token.slice(0, PREFIX.length + 6);
+/** Short, safe-to-display prefix (e.g. "cs_live_ab12cd34…"). */
+export function tokenPrefix(token: string): string {
+  return token.slice(0, 16);
+}
 
-/** Resolve a bearer token to its member/org/role, or null. Updates last_used. */
-export async function lookupMemberByToken(token: string): Promise<TokenContext | null> {
-  const supabase = getServiceSupabase();
-  if (!supabase) return null;
+/**
+ * Resolve a raw token to the member it belongs to. Tries (1) static keys from
+ * env / the dev key, then (2) the hashed member_tokens table. Returns null if
+ * unknown or revoked.
+ */
+export async function lookupMemberByToken(token: string): Promise<MemberToken | null> {
+  if (!token) return null;
 
-  const { data: tok } = await supabase
+  // 1) Static keys (dev key + CODESENTINEL_KEYS) — works without a database.
+  const fromStatic = staticKeys()[token];
+  if (fromStatic) {
+    return {
+      memberId: token === DEV_KEY ? "demo" : `static:${tokenPrefix(token)}`,
+      memberName: fromStatic.name,
+      policyIds: fromStatic.policyIds ?? roleById(ROLE_DEFAULT)?.policyIds ?? [],
+    };
+  }
+
+  // 2) Hashed lookup in the database.
+  if (!isSupabaseConfigured) return null;
+  const db = adminSupabase();
+  if (!db) return null;
+
+  const { data, error } = await db
     .from("member_tokens")
-    .select("id, member_id")
+    .select("member_id, revoked_at, members ( id, full_name, policy_ids )")
     .eq("token_hash", hashToken(token))
     .is("revoked_at", null)
     .maybeSingle();
-  if (!tok) return null;
+  if (error || !data) return null;
 
-  const { data: member } = await supabase
-    .from("members")
-    .select("id, org_id, full_name, team, role_id, policy_ids")
-    .eq("id", tok.member_id)
-    .maybeSingle();
+  // Supabase types the joined relation loosely; normalise it.
+  const member = (Array.isArray(data.members) ? data.members[0] : data.members) as
+    | { id: string; full_name: string; policy_ids: string[] }
+    | undefined;
   if (!member) return null;
 
-  void supabase.from("member_tokens").update({ last_used_at: new Date().toISOString() }).eq("id", tok.id);
+  // Best-effort "last used" stamp; ignore failures.
+  await db
+    .from("member_tokens")
+    .update({ last_used_at: new Date().toISOString() })
+    .eq("token_hash", hashToken(token));
 
-  return {
-    memberId: member.id,
-    orgId: member.org_id,
-    memberName: member.full_name,
-    team: member.team,
-    roleId: member.role_id,
-    policyIds: member.policy_ids ?? [],
-  };
+  return { memberId: member.id, memberName: member.full_name, policyIds: member.policy_ids ?? [] };
 }

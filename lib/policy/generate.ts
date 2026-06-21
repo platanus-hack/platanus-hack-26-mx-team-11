@@ -1,53 +1,83 @@
-import type { Policy } from "@/lib/policy/types";
+/**
+ * Generate the `~/.claude/settings.json` an agent needs to be governed by
+ * CodeSentinel: the declarative permission rules from the selected policies plus
+ * the hooks that (a) review each request before it runs and (b) stream activity
+ * to the console for observability.
+ */
+import type { Policy } from "@/lib/policy/catalog";
 
-/** How the generated hooks authenticate to the ingest endpoint. */
-export type AuthMode =
-  | { kind: "env"; envVar: string } // header reads $ENV — manual / managed setup
-  | { kind: "token"; token: string }; // header embeds the token — one-line installer
+export type AuthConfig =
+  | { kind: "token"; token: string }
+  | { kind: "env"; envVar: string };
 
-export interface GenerateInput {
-  endpoint: string; // e.g. https://app.sentinel.dev or http://localhost:3000
+export interface BuildSettingsInput {
+  endpoint: string;
   policies: Policy[];
-  auth: AuthMode;
-  defaultMode?: string; // permissions.defaultMode (omitted when "default")
+  auth: AuthConfig;
+  /** Claude Code default permission mode. */
+  defaultMode?: "default" | "acceptEdits" | "plan";
 }
 
-const TRACKED_EVENTS = ["SessionStart", "UserPromptSubmit", "Stop", "SessionEnd"] as const;
-const unique = (values: string[]) => [...new Set(values)];
+export interface ClaudeHook {
+  type: "command";
+  command: string;
+}
+export interface HookMatcher {
+  matcher?: string;
+  hooks: ClaudeHook[];
+}
+export interface GeneratedSettings {
+  permissions: { deny?: string[]; ask?: string[]; defaultMode?: string };
+  hooks: Record<string, HookMatcher[]>;
+}
 
-/**
- * Produce a complete Claude Code settings.json: Sentinel's tracking hooks plus
- * the permission rules from the selected policies. Drop into ~/.claude/settings.json
- * (or push via managed settings to enforce org-wide).
- */
-export function buildSettings({ endpoint, policies, auth, defaultMode }: GenerateInput) {
-  const url = `${endpoint.replace(/\/+$/, "")}/api/ingest`;
-  const authorization = auth.kind === "env" ? `Bearer $${auth.envVar}` : `Bearer ${auth.token}`;
-  const hook = {
-    type: "http",
-    url,
-    headers: { Authorization: authorization },
-    ...(auth.kind === "env" ? { allowedEnvVars: [auth.envVar] } : {}),
+/** Filter the library down to a set of ids, preserving catalog order. */
+export function resolvePolicies(all: Policy[], ids: string[]): Policy[] {
+  const want = new Set(ids);
+  return all.filter((p) => want.has(p.id));
+}
+
+/** Render the Authorization header value for the chosen auth mode. */
+function authHeader(auth: AuthConfig): string {
+  return auth.kind === "token"
+    ? `Authorization: Bearer ${auth.token}`
+    : `Authorization: Bearer $${auth.envVar}`;
+}
+
+/** A curl one-liner that POSTs the hook's stdin JSON to a CodeSentinel route. */
+function post(endpoint: string, path: string, auth: AuthConfig): ClaudeHook {
+  const url = `${endpoint.replace(/\/$/, "")}${path}`;
+  return {
+    type: "command",
+    command:
+      `curl -fsS -m 12 -X POST ${url} ` +
+      `-H "${authHeader(auth)}" -H "content-type: application/json" --data-binary @-`,
   };
+}
 
-  const hooks: Record<string, unknown> = { PreToolUse: [{ matcher: "*", hooks: [hook] }] };
-  for (const event of TRACKED_EVENTS) hooks[event] = [{ hooks: [hook] }];
+export function buildSettings(input: BuildSettingsInput): GeneratedSettings {
+  const { endpoint, policies, auth, defaultMode = "default" } = input;
 
-  const deny = unique(policies.flatMap((p) => p.rules.deny ?? []));
-  const ask = unique(policies.flatMap((p) => p.rules.ask ?? []));
+  const deny = dedupe(policies.flatMap((p) => p.rules.deny ?? []));
+  const ask = dedupe(policies.flatMap((p) => p.rules.ask ?? []));
 
-  const permissions: Record<string, unknown> = {};
+  const permissions: GeneratedSettings["permissions"] = { defaultMode };
   if (deny.length) permissions.deny = deny;
   if (ask.length) permissions.ask = ask;
-  if (defaultMode && defaultMode !== "default") permissions.defaultMode = defaultMode;
 
-  const settings: Record<string, unknown> = {};
-  if (Object.keys(permissions).length) settings.permissions = permissions;
-  settings.hooks = hooks;
-  return settings;
+  return {
+    permissions,
+    hooks: {
+      // Pre-request governance: review (and possibly rewrite/block) before send.
+      UserPromptSubmit: [{ hooks: [post(endpoint, "/api/evaluate", auth)] }],
+      // Observability: stream activity to the console.
+      PreToolUse: [{ matcher: "*", hooks: [post(endpoint, "/api/ingest", auth)] }],
+      PostToolUse: [{ matcher: "*", hooks: [post(endpoint, "/api/ingest", auth)] }],
+      Stop: [{ hooks: [post(endpoint, "/api/ingest", auth)] }],
+    },
+  };
 }
 
-/** Resolve policy ids → policy objects (for buildSettings input). */
-export function resolvePolicies(catalog: Policy[], ids: string[]): Policy[] {
-  return ids.map((id) => catalog.find((p) => p.id === id)).filter((p): p is Policy => Boolean(p));
+function dedupe(xs: string[]): string[] {
+  return [...new Set(xs)];
 }

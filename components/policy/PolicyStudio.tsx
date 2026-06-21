@@ -88,7 +88,7 @@ export function PolicyStudio() {
           <div style={st.policyList}>
             {POLICIES.map((p) => {
               const on = selected.has(p.id);
-              const accent = SEV[p.category === "policy" ? "high" : p.category === "insecure" ? "medium" : "low"].color;
+              const accent = SEV[p.severity === "critical" ? "critical" : p.severity === "warning" ? "high" : "low"].color;
               const count = (p.rules.deny?.length ?? 0) + (p.rules.ask?.length ?? 0);
               return (
                 <button key={p.id} onClick={() => togglePolicy(p.id)} style={{ ...st.policyRow, borderColor: on ? accent : C.borderSoft }}>
