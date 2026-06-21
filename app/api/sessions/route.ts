@@ -1,14 +1,10 @@
 import { NextResponse } from "next/server";
-import { store } from "@/lib/store";
+import { listSessionsForViewer } from "@/lib/repo/dashboard";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-// PoC: the dashboard is the admin's own machine, scoped to the demo org.
-// Swap for authenticated, org-derived access when auth lands.
-const DEMO_ORG = "org_demo";
-
-/** Live feed the admin console polls. */
+/** Live feed the console polls — scoped to the signed-in admin's org (or demo). */
 export async function GET() {
-  return NextResponse.json({ sessions: store.listSessions(DEMO_ORG) });
+  return NextResponse.json({ sessions: await listSessionsForViewer() });
 }

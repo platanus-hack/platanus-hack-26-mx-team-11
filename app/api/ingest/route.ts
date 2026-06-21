@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { bearerFrom, lookupUserByApiKey } from "@/lib/auth/apiKeys";
+import { resolveIdentity } from "@/lib/auth/identity";
 import { processHookEvent } from "@/lib/ingest/process";
 import type { ClaudeHookEvent } from "@/lib/ingest/claudeHooks";
 
@@ -8,8 +8,8 @@ export const dynamic = "force-dynamic";
 
 /** Receives Claude Code hook events. One endpoint, all event types. */
 export async function POST(req: Request) {
-  const user = lookupUserByApiKey(bearerFrom(req.headers.get("authorization")));
-  if (!user) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
+  const identity = await resolveIdentity(req.headers.get("authorization"));
+  if (!identity) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
 
   let event: ClaudeHookEvent;
   try {
@@ -21,16 +21,14 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "missing session_id or hook_event_name" }, { status: 400 });
   }
 
-  const result = await processHookEvent(user, event);
+  const result = await processHookEvent(identity, event);
 
-  // Tell Claude Code to deny the tool call when a critical rule trips and
-  // blocking is enabled. Otherwise acknowledge and let it proceed.
   if (result.blocked) {
     return NextResponse.json({
       hookSpecificOutput: {
         hookEventName: "PreToolUse",
         permissionDecision: "deny",
-        permissionDecisionReason: `CodeSentinel blocked this: ${result.reason}`,
+        permissionDecisionReason: `Sentinel blocked this: ${result.reason}`,
       },
     });
   }
