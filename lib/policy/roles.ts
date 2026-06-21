@@ -1,42 +1,77 @@
-import type { Role } from "@/lib/policy/types";
+/**
+ * Role presets — sensible starting bundles of Library policies for common
+ * personas. In the governance model these map to **groups**: a group is a named
+ * set of members that inherits org policies plus its own. Roles remain the quick
+ * preset used by the Team page and Policy Studio.
+ */
+import { POLICIES } from "@/lib/policy/catalog";
 
-/** Role presets. Selecting one preselects its policies; everything stays editable. */
+export interface Role {
+  id: string;
+  label: string;
+  description: string;
+  policyIds: string[];
+}
+
+/** Every shipped policy id — used by the "locked down" preset. */
+const ALL = POLICIES.map((p) => p.id);
+
 export const ROLES: Role[] = [
   {
+    id: "marketing",
+    label: "Marketing Vibe Coders",
+    description: "Build dashboards & sites with anonymized data and approved tools.",
+    policyIds: [
+      "prevent-pii-export",
+      "no-production-access",
+      "approved-apis-only",
+      "public-publish-approval",
+      "prompt-injection-protection",
+    ],
+  },
+  {
     id: "finance",
-    label: "Finance",
-    team: "Finance",
-    description: "Handles sensitive customer & financial data. Locked down by default.",
-    policyIds: ["protect-production", "protect-secrets", "no-external-network", "no-destructive"],
+    label: "Finance Analysts",
+    description: "Tight data controls — no PII export, no production, no destructive ops.",
+    policyIds: [
+      "prevent-pii-export",
+      "no-production-access",
+      "prevent-secrets",
+      "no-destructive-commands",
+      "prompt-injection-protection",
+    ],
   },
   {
     id: "support",
     label: "Support",
-    team: "Support",
-    description: "Builds quick internal tools. Guard prod and destructive actions.",
-    policyIds: ["protect-production", "no-destructive", "approve-deploys"],
-  },
-  {
-    id: "marketing",
-    label: "Marketing",
-    team: "Marketing",
-    description: "Automations and integrations. Keep secrets and traffic in check.",
-    policyIds: ["protect-secrets", "no-external-network", "approve-installs"],
+    description: "Internal tooling with secret + injection protection.",
+    policyIds: ["prevent-secrets", "prevent-pii-export", "prompt-injection-protection"],
   },
   {
     id: "engineering",
     label: "Engineering",
-    team: "Engineering",
-    description: "Trusted builders. Light guardrails, confirm risky steps.",
-    policyIds: ["approve-deploys", "approve-installs"],
+    description: "Lighter touch — secrets, destructive ops, and deploy approvals.",
+    policyIds: [
+      "prevent-secrets",
+      "no-destructive-commands",
+      "public-publish-approval",
+      "approve-installs",
+      "prompt-injection-protection",
+    ],
   },
   {
-    id: "locked-down",
-    label: "Locked down",
-    team: "Restricted",
-    description: "Maximum restriction — every policy on.",
-    policyIds: ["protect-production", "no-destructive", "protect-secrets", "no-external-network", "approve-deploys", "approve-installs"],
+    id: "external-contractors",
+    label: "External Contractors",
+    description: "Locked down — every policy on.",
+    policyIds: ALL,
   },
 ];
 
-export const roleById = (id: string): Role | undefined => ROLES.find((r) => r.id === id);
+/** The role new members default to. */
+export const ROLE_DEFAULT = "engineering";
+
+const BY_ID = new Map(ROLES.map((r) => [r.id, r]));
+
+export function roleById(id: string): Role | undefined {
+  return BY_ID.get(id);
+}

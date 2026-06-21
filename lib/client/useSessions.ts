@@ -3,25 +3,26 @@
 import { useEffect, useState } from "react";
 import type { Session } from "@/lib/types";
 
-/** Poll the live feed. Simple and robust for a PoC; swap for SSE/Pusher later. */
+/** Poll the live feed the console renders. Defaults to a 1.5s cadence. */
 export function useSessions(intervalMs = 1500): Session[] {
   const [sessions, setSessions] = useState<Session[]>([]);
 
   useEffect(() => {
-    let alive = true;
-    const pull = async () => {
+    let active = true;
+    async function poll() {
       try {
         const res = await fetch("/api/sessions", { cache: "no-store" });
-        const data = (await res.json()) as { sessions: Session[] };
-        if (alive) setSessions(data.sessions);
+        if (!res.ok) return;
+        const data = (await res.json()) as { sessions?: Session[] };
+        if (active && Array.isArray(data.sessions)) setSessions(data.sessions);
       } catch {
-        /* transient — next tick retries */
+        // transient — keep the last good state and try again next tick.
       }
-    };
-    pull();
-    const id = setInterval(pull, intervalMs);
+    }
+    poll();
+    const id = setInterval(poll, intervalMs);
     return () => {
-      alive = false;
+      active = false;
       clearInterval(id);
     };
   }, [intervalMs]);

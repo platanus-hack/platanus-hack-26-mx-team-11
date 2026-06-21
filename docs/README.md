@@ -14,6 +14,7 @@ find it.
 | Onboard a teammate's Claude Code | [onboarding.md](./onboarding.md) | `app/api/install/[token]`, `lib/auth/tokens.ts` |
 | Tune risk detection | [agent.md](./agent.md) | `lib/risk/*` |
 | Manage roles & policies | [policies.md](./policies.md) | `lib/policy/*`, `app/dashboard/team/*` |
+| Plan governance & pre-request enforcement | [governance-spec.md](./governance-spec.md) | *(spec — org/group policies, intercept-before)* |
 | Deploy to production | [deploy.md](./deploy.md) | `.env.example` |
 | Hand-write the Claude Code hooks | [INTEGRATION.md](./INTEGRATION.md) | — |
 

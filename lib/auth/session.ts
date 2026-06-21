@@ -1,45 +1,56 @@
 import { redirect } from "next/navigation";
-import { isSupabaseConfigured } from "@/lib/db/env";
 import { createServerSupabase } from "@/lib/db/supabase/server";
+import { isSupabaseConfigured } from "@/lib/db/env";
 
+/** The signed-in admin, with their org resolved from their profile. */
 export interface Viewer {
-  userId: string;
+  id: string;
+  orgId: string;
   email: string;
   fullName: string;
-  orgId: string;
   orgName: string;
 }
 
-/** The signed-in admin + their org, or null (also null in demo mode). */
+/**
+ * The current admin, or null. In demo mode (no Supabase) this is always null —
+ * the console still renders (reads come from the in-memory store) but write
+ * actions short-circuit.
+ */
 export async function getViewer(): Promise<Viewer | null> {
   if (!isSupabaseConfigured) return null;
-
   const supabase = await createServerSupabase();
-  const { data: auth } = await supabase.auth.getUser();
-  if (!auth.user) return null;
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) return null;
 
   const { data: profile } = await supabase
     .from("profiles")
-    .select("org_id, full_name, email, orgs(name)")
-    .eq("id", auth.user.id)
+    .select("id, org_id, email, full_name, orgs ( name )")
+    .eq("id", user.id)
     .maybeSingle();
+  if (!profile) return null;
 
-  const org = profile?.orgs as { name?: string } | { name?: string }[] | null | undefined;
-  const orgName = Array.isArray(org) ? org[0]?.name ?? "" : org?.name ?? "";
+  const org = (Array.isArray(profile.orgs) ? profile.orgs[0] : profile.orgs) as
+    | { name: string }
+    | undefined;
 
   return {
-    userId: auth.user.id,
-    email: profile?.email ?? auth.user.email ?? "",
-    fullName: profile?.full_name ?? "",
-    orgId: profile?.org_id ?? "",
-    orgName,
+    id: profile.id,
+    orgId: profile.org_id,
+    email: profile.email,
+    fullName: profile.full_name ?? "",
+    orgName: org?.name ?? "",
   };
 }
 
-/** For protected pages: redirect to /login when configured & unauthenticated;
- *  returns null in demo mode so the page still renders. */
+/**
+ * Like getViewer, but redirects unauthenticated admins to /login when Supabase
+ * is configured. In demo mode it returns null and the page renders anyway.
+ */
 export async function requireViewer(): Promise<Viewer | null> {
+  if (!isSupabaseConfigured) return null;
   const viewer = await getViewer();
-  if (isSupabaseConfigured && !viewer) redirect("/login");
+  if (!viewer) redirect("/login");
   return viewer;
 }
