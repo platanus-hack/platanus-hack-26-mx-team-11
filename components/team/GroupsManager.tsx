@@ -7,7 +7,6 @@ import { Brand } from "@/components/ui/Brand";
 import { C } from "@/components/dashboard/theme";
 import { PolicyLibrary, severityColor } from "@/components/policy/PolicyLibrary";
 import { policyById } from "@/lib/policy/catalog";
-import { ROLES } from "@/lib/policy/roles";
 import type { GroupView } from "@/lib/repo/groups";
 import type { MemberView } from "@/lib/repo/members";
 import {
@@ -156,15 +155,12 @@ function PolicyChip({ id, onRemove }: { id: string; onRemove?: () => void }) {
 function CreateGroup({ onCreate }: { onCreate: (name: string, desc: string, policyIds: string[]) => void }) {
   const [name, setName] = useState("");
   const [desc, setDesc] = useState("");
-  const [template, setTemplate] = useState("blank");
 
   function submit() {
     if (!name.trim()) return;
-    const policyIds = template === "blank" ? [] : ROLES.find((r) => r.id === template)?.policyIds ?? [];
-    onCreate(name, desc, policyIds);
+    onCreate(name, desc, []);
     setName("");
     setDesc("");
-    setTemplate("blank");
   }
 
   return (
@@ -173,13 +169,9 @@ function CreateGroup({ onCreate }: { onCreate: (name: string, desc: string, poli
       <div style={st.createForm}>
         <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Group name (e.g. Sales Ops)" style={st.input} />
         <input value={desc} onChange={(e) => setDesc(e.target.value)} placeholder="Description (optional)" style={st.input} />
-        <select value={template} onChange={(e) => setTemplate(e.target.value)} style={st.input} title="Start from a template">
-          <option value="blank">Blank</option>
-          {ROLES.map((r) => <option key={r.id} value={r.id}>From: {r.label}</option>)}
-        </select>
         <button onClick={submit} disabled={!name.trim()} style={{ ...st.addBtn, opacity: name.trim() ? 1 : 0.5 }}>Create group</button>
       </div>
-      <div style={st.cardHint}>A template just pre-selects policies — you can change them after.</div>
+      <div style={st.cardHint}>Attach policies from the library after creating the group.</div>
     </section>
   );
 }
@@ -286,7 +278,7 @@ const st: Record<string, CSSProperties> = {
   chips: { display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center" },
   empty: { color: C.faint, fontSize: 12.5 },
 
-  createForm: { display: "grid", gridTemplateColumns: "1.3fr 1.6fr 1fr auto", gap: 9, alignItems: "center", marginTop: 4, marginBottom: 8 },
+  createForm: { display: "grid", gridTemplateColumns: "1.3fr 1.6fr auto", gap: 9, alignItems: "center", marginTop: 4, marginBottom: 8 },
   input: { background: C.bg, color: C.text, border: `1px solid ${C.border}`, borderRadius: 8, padding: "9px 11px", fontSize: 13, fontFamily: "var(--ui)", outline: "none", minWidth: 0 },
   addBtn: { background: C.accent, color: C.accentInk, border: "none", borderRadius: 8, padding: "9px 16px", fontSize: 13, fontWeight: 700, cursor: "pointer", whiteSpace: "nowrap", fontFamily: "var(--ui)" },
   primaryBtn: { background: C.accent, color: C.accentInk, border: "none", borderRadius: 8, padding: "7px 13px", fontSize: 12, fontWeight: 700, cursor: "pointer", fontFamily: "var(--ui)" },
